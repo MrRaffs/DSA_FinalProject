@@ -1,0 +1,10 @@
+elektronik
+pakaian
+makanan
+dokumen
+fragile
+buku
+alat_tulis
+obat
+peralatan_rumah
+kosmetik
