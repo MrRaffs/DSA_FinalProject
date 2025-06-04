@@ -113,6 +113,7 @@ struct NodeHistory{
     data(d){};
 };
 NodeHistory* headNodeHistory = nullptr; //top of the stack
+NodeHistory* headNodeDelivered = nullptr; //top of the stack, not used yet
 
 struct NodeTree{
     string key;
@@ -140,16 +141,15 @@ struct Edge {
 //prototype
 void enqueuePaket(Paket* data, NodeQueue*& head, NodeQueue*& tail); //universal enqueue
 void dequeuePaket(NodeQueue*& head, NodeQueue*& tail);
-void pushHistory(Paket* data);
-void popHistory(Paket*& data);
-void addToTree(Paket* data);
-void deleteFromTree(Paket* paket);
-void addToHash(Paket* paket);
-void deleteFromHash(Paket*& paket);
+void pushHistory(Paket* data, NodeHistory*& head);
+void popHistory(Paket*& data, NodeHistory*& head);
+void addToTree(Paket*& data);
+void deleteFromTree(Paket*& data);
+void addToHash(Paket*& data);
+void deleteFromHash(Paket*& data);
 void jarakGraph(); //graph shortest path from a to b
 int getJarak(const string& asal, const string& tujuan);
 void updatePaketDB();
-//? void saveHash();
 
 //UTILS 
 //resi generator
@@ -194,14 +194,19 @@ string getWaktuNow(){
 
     return waktu;
 }
-//helper tanggal YYYY:MM:DD
+//helper date YYYY-MM-DD
 string getDateNow(){
     time_t now = time(0); //get current time in seconds based on unix time
     tm *tmNow = localtime(&now); //struct 
-    char waktu[11]; // "YYYY-MM-DD" + '\0'
-    strftime(waktu, sizeof(waktu), "%Y-%m-%d", tmNow);
+    char date[11]; // "YYYY-MM-DD" + '\0'
+    strftime(date, sizeof(date), "%Y-%m-%d", tmNow);
 
-    return waktu;
+    return date;
+}
+//helper status YYYY-MM-DD <HH:MM>
+string setStatusTime(){
+    string status = "[" + getDateNow() + " <" + getWaktuNow() + ">]";
+    return status;
 }
 
 //utils kalkulasi ongkir
@@ -215,6 +220,49 @@ int getOngkir(float berat, string kotaAsal, string kotaTujuan){
     
     int ongkir = ceil(berat) * tarifPerKg;
     return ongkir;
+}
+
+//helper getStatus
+string getStatus(Paket* data){
+    string statusPaket = "";
+    string statusStr;
+    if(!data){
+        cout << "\n\n[Data kosong!]";
+        return statusPaket;
+    }
+    switch (data->statusType)
+    {
+    case TRANSIT_IN:
+        statusStr = "Paket tiba di Surabaya [Rungkut DC]";
+        break;
+    case CLIENT_IN:
+        statusStr = "Menunggu konfirmasi";
+        break;
+    case GUDANG:
+        statusStr = "Paket di gudang Surabaya [Rungkut DC]";
+        break;
+    case TRANSIT_OUT:
+        statusStr = "Paket telah disortir";
+        break;
+    case TRANSIT_ACC:
+        statusStr = "Paket keluar dari Surabaya [Rungkut DC]";
+        break;
+    case CLIENT_OUT:
+        statusStr = "Paket diantar ke alamat tujuan";
+        break;
+    case DELIVERED:
+        statusStr = "Paket telah diterima";
+        break;
+    case RETURNED:
+        statusStr = "Paket dikembalikan";
+        break;
+    default:
+        break;
+    }
+
+    statusPaket = data->statusTime;
+    statusPaket = statusPaket + " - " + statusStr;
+    return statusPaket;
 }
 
 char inputHandler(){
@@ -233,7 +281,7 @@ bool regexValidator(InputType inpuType, string inputStr){
     case NAMA:
         return regex_match(inputStr, regex("^[a-zA-Z ]+$"));
     case TELP:
-        return regex_match(inputStr, regex("^[0-9]{10,12}$"));
+        return regex_match(inputStr, regex("^[0-9]{10,13}$"));
     case RESI:
         return regex_match(inputStr, regex("^AJ[0-9]{11}$")); // AJ + 11 digits, total 13 chars
     default:
@@ -252,16 +300,25 @@ int hashFunc(string resi){
     return sum % HASH_SIZE;
 }
 
-void addToHash(Paket* data){
+void addToHash(Paket*& data){
     int hashIndex = hashFunc(data->resi);
-    NodeHash* temp = paketHash[hashIndex].head;
-    while(temp->next != nullptr){
-        temp = temp->next;
-    }
-
     NodeHash* newNode = new NodeHash(data);
-    temp->next = newNode;
-    // cout << "\n[Paket berhasil ditambahkan ke hashmap]";
+
+    if (paketHash[hashIndex].head == nullptr) {
+        paketHash[hashIndex].head = newNode;
+    } else {
+        NodeHash* temp = paketHash[hashIndex].head;
+        while(temp->next != nullptr){
+            if(temp->dataPtr->resi == data->resi){
+                cout << "\n\n[Paket dengan resi ini sudah ada di hash]\n";
+                delete newNode; //delete the new node since it's a duplicate
+                return;
+            }
+            temp = temp->next;
+        }
+        temp->next = newNode;
+    }
+    cout << "\n[Paket berhasil ditambahkan]";
     return;
 };
 
@@ -306,18 +363,18 @@ Paket* findInHash(string resi){
     }
     
     if(helper == nullptr){
-        cout << "\n\n[Paket tidak ditemukan]";
+        cout << "\n\n[Paket tidak ditemukan]\n";
         return nullptr;
     }
     //found
-    cout << "\n[Paket ditemukan]";
+    cout << "\n[Paket ditemukan]\n";
     return helper->dataPtr;
 };
 
 //Queue function, pass pointer by reference to update the global variable
 void enqueuePaket(Paket* data, NodeQueue*& head, NodeQueue*& tail){
     if(data == nullptr){
-        cout << "\n\nData Paket Kosong!";
+        cout << "\n\nData Paket Kosong!\n";
         system("pause");
         return;
     }
@@ -334,7 +391,8 @@ void enqueuePaket(Paket* data, NodeQueue*& head, NodeQueue*& tail){
 };
 
 //helper untuk enqueue paket sesuai statusnya
-void enqueueHelper(Paket* data){
+void enqueueHelper(Paket*& data){
+    // cout << "[DEBUG] Enqueueing paket: " << data->resi << endl;
     switch (data->statusType)
     {
     case CLIENT_IN:
@@ -346,11 +404,23 @@ void enqueueHelper(Paket* data){
     case GUDANG:
         if (data->penerima.alamat != "SURABAYA"){
             enqueuePaket(data, headTransitOut, tailTransitOut); //paket keluar gudang
+            cout << "\n\n[Paket " << data->resi << " keluar gudang]\n";
+            data->statusType = TRANSIT_OUT; //paket sudah disortir
+        } else {
+            enqueuePaket(data, headClientOut, tailClientOut); //paket diantar ke penerima
+            cout << "\n\n[Paket " << data->resi << " diantar ke penerima]\n";
+            data->statusType = CLIENT_OUT; //paket dalam proses pengantaran
+        }
+        break;
+    case RETURNED:
+        if (data->penerima.alamat != "SURABAYA"){
+            enqueuePaket(data, headTransitOut, tailTransitOut); //paket keluar gudang
             data->statusType = TRANSIT_OUT; //paket sudah disortir
         } else {
             enqueuePaket(data, headClientOut, tailClientOut); //paket diantar ke penerima
             data->statusType = CLIENT_OUT; //paket dalam proses pengantaran
         }
+        break;
     default:
         break;
     }
@@ -359,7 +429,7 @@ void enqueueHelper(Paket* data){
 
 void dequeuePaket(NodeQueue*& head, NodeQueue*& tail){
     if(head == nullptr || head->data == nullptr){
-        cout << "\nGagal menghapus, data antrian kosong!";
+        cout << "\nGagal menghapus, data antrian kosong!\n";
         system("pause");
         return;
     }
@@ -375,10 +445,9 @@ void dequeuePaket(NodeQueue*& head, NodeQueue*& tail){
     return;
 };
 
-//!WIP
 //helper untuk dequeue paket sesuai statusnya
 void dequeueHelper(Paket*& data){
-    data->statusTime = getWaktuNow();
+    data->statusTime = setStatusTime(); //update status time
     switch (data->statusType)
     {
     case CLIENT_IN:
@@ -392,11 +461,12 @@ void dequeueHelper(Paket*& data){
         data->statusType = GUDANG;
         break;
     case CLIENT_OUT:
-        pushHistory(data); //paket diantar ke penerima
+        pushHistory(data, headNodeDelivered); //paket diantar ke penerima
         dequeuePaket(headClientOut, tailClientOut); //paket dihapus dari antrian
         data->statusType = DELIVERED;
         break;
     case TRANSIT_OUT:
+        pushHistory(data, headNodeHistory); //Simpan History
         dequeuePaket(headTransitOut, tailTransitOut); //paket dihapus dari antrian
         data->statusType = TRANSIT_ACC; //paket sudah disortir
         break;
@@ -405,66 +475,150 @@ void dequeueHelper(Paket*& data){
     }
 };
 
-//stack operation
-void pushHistory(Paket* data){
-    NodeHistory* newNode = new NodeHistory(data);
-    newNode->next = headNodeHistory; //it point at nullptr if stack is empty, so no prob here
-    headNodeHistory = newNode;
+//sort paket pada antrian, the older waktuKirim the higher priority, insertion sort since the data is almost sorted most of the time
+void sortPaketByWaktuKirim(NodeQueue*& head, NodeQueue*& tail){
+    if (head == nullptr || head->next == nullptr) {
+        cout << "\n\n[Data antrian kosong atau hanya ada satu paket, tidak perlu diurutkan.]\n";
+        return;
+    }
 
-    headNodeHistory->data->statusType = DELIVERED;
+    NodeQueue* sorted = nullptr; //sorted list
+    NodeQueue* current = head;
+
+    while (current != nullptr) {
+        NodeQueue* nextNode = current->next; // Store the next node
+        // Insert current into sorted linked list
+        if (sorted == nullptr || current->data->waktuKirim < sorted->data->waktuKirim) {
+            current->next = sorted;
+            sorted = current;
+        } else {
+            NodeQueue* temp = sorted;
+            while (temp->next != nullptr && temp->next->data->waktuKirim < current->data->waktuKirim) {
+                temp = temp->next;
+            }
+            current->next = temp->next;
+            temp->next = current;
+        }
+        current = nextNode; // Move to the next node
+    }
+
+    head = sorted; // Update head to the new sorted list
+    tail = head; // need to find it again
+    while (tail != nullptr && tail->next != nullptr) {
+        tail = tail->next;
+    }
+    cout << "\n[Antrian paket telah diurutkan berdasarkan waktu kirim.]\n";
+};
+
+//stack operation
+void pushHistory(Paket* data, NodeHistory*& head){
+    NodeHistory* newNode = new NodeHistory(data);
+    newNode->next = head; //it point at nullptr if stack is empty, so no prob here
+    head = newNode;
+
+    head->data->statusType = DELIVERED;
     return;
 };
 
-void popHistory(Paket*& data){
-    NodeHistory* delNode = headNodeHistory;
+void popHistory(Paket*& data, NodeHistory*& head){
+    NodeHistory* delNode = head;
 
-    headNodeHistory = delNode->next;
+    head = delNode->next;
 
-    delNode->data->statusType = RETURNED;
-    delNode->data->statusTime = getWaktuNow();
-    DataClient temp = delNode->data->pengirim;
-    delNode->data->pengirim = delNode->data->penerima; //pengirim jadi penerima
-    delNode->data->penerima = temp;
-
-    enqueuePaket(data, headClientIn, tailClientIn); //paket dikembalikan
+    deleteFromHash(delNode->data); //delete from hash
     delete delNode;
     return;
 }
 
-//clear all history
-void clearHistory(){
-    if (headNodeHistory == nullptr) {
-        cout << "\n\nHistory kosong!";
+void returnPaket(string resi){
+    if (headNodeDelivered == nullptr) {
+        cout << "\n\n[History kosong!]\n";
         system("pause");
         return;
     }
-    NodeHistory* helper = headNodeHistory;
+    if(findInHash(resi) == nullptr){
+        cout << "\n\n[Paket dengan Resi " << resi << " tidak ditemukan.]\n";
+        system("pause");
+        return;
+    }
+    
+    // Find the delivered package by resi
+    NodeHistory* helper = headNodeDelivered;
+    NodeHistory* prev = nullptr;
+    while (helper != nullptr) {
+        if (helper->data->resi == resi) {
+            // Paket ditemukan hapus dari history
+            //unlink the node
+            if(helper == headNodeDelivered) {
+                headNodeDelivered = helper->next; 
+            } else {
+                prev->next = helper->next;
+            }
+
+            //lakukan pengembalian
+            helper->data->statusType = RETURNED;
+            helper->data->statusTime = setStatusTime();
+            DataClient temp = helper->data->pengirim;
+            helper->data->pengirim = helper->data->penerima; //pengirim jadi penerima
+            helper->data->penerima = temp;
+
+            addToTree(helper->data); //add to tree
+            delete helper; //delete the node
+            cout << "\n[Paket berhasil dikembalikan ke Gudang]\n";
+            return;
+        }
+        prev = helper; 
+        helper = helper->next;
+    }
+
+    cout << "\n[Paket dengan Resi " << resi << " tidak ditemukan dalam history.]";
+    system("pause");
+    return;
+}
+
+//clear all history
+void clearHistory(NodeHistory*& head){
+    if (head == nullptr) {
+        cout << "\n\nHistory kosong!\n";
+        system("pause");
+        return;
+    }
+    NodeHistory* helper = head;
     while (helper != nullptr) {
         NodeHistory* temp = helper;
         helper = helper->next;
         deleteFromHash(temp->data); //delete from hash
         delete temp; //delete node
     }
-    headNodeHistory = nullptr;
+    head = nullptr;
     cout << "\n[History telah dibersihkan.]";
 };
 
 //traverse and print list
 void showQueue(NodeQueue* head){
     if (head == nullptr) {
-        cout << "\n\nData antrian kosong!";
+        cout << "\n\nData antrian kosong!\n";
         system("pause");
         return;
     }
 
     NodeQueue* helper = head;
-    int num = 0;
+    int num = 1;
     while(helper != nullptr) {
-        cout << "[" << num << "]" <<endl;
-        cout << "Resi" << helper->data->resi << endl;
-        cout << "Pengirim" << helper->data->pengirim.nama << endl;
-        cout << "Tujuan" << helper->data->penerima.alamat << endl;
-        //? status :
+        cout << "[" << num << "]" << endl;
+        cout << "  Resi             : " << helper->data->resi << endl;
+        cout << "  Kategori Barang  : " << helper->data->kategoriBarang << endl;
+        cout << "  Pengirim         : " << helper->data->pengirim.nama << endl;
+        cout << "  Telp Pengirim    : " << helper->data->pengirim.telp << endl;
+        cout << "  Alamat Pengirim  : " << helper->data->pengirim.alamat << endl;
+        cout << "  Penerima         : " << helper->data->penerima.nama << endl;
+        cout << "  Telp Penerima    : " << helper->data->penerima.telp << endl;
+        cout << "  Alamat Tujuan    : " << helper->data->penerima.alamat << endl;
+        cout << "  Kategori Barang  : " << helper->data->kategoriBarang << endl;
+        cout << "  Waktu Kirim      : " << helper->data->waktuKirim << endl;
+        cout << "  Status           : " << getStatus(helper->data) << endl;
+        cout << "----------------------------------------" << endl;
+
         helper = helper->next;
         num++;
     }
@@ -472,20 +626,29 @@ void showQueue(NodeQueue* head){
 
 void showHistory(NodeHistory* head){
     if (head == nullptr) {
-        cout << "\n\nData History kosong!";
+        cout << "\n\nData History kosong!\n";
         system("pause");
         return;
     }
 
     NodeHistory* helper = head;
-    int num = 0;
+    int num = 1;
     while(helper != nullptr) {
-        cout << "[" << num << "]" <<endl;
-        cout << "Resi" << helper->data->resi << endl;
-        cout << "Pengirim" << helper->data->pengirim.nama << endl;
-        cout << "Tujuan" << helper->data->penerima.alamat << endl;
-        //? status :
+        cout << "[" << num << "]" << endl;
+        cout << "  Resi             : " << helper->data->resi << endl;
+        cout << "  Kategori Barang  : " << helper->data->kategoriBarang << endl;
+        cout << "  Pengirim         : " << helper->data->pengirim.nama << endl;
+        cout << "  Telp Pengirim    : " << helper->data->pengirim.telp << endl;
+        cout << "  Alamat Pengirim  : " << helper->data->pengirim.alamat << endl;
+        cout << "  Penerima         : " << helper->data->penerima.nama << endl;
+        cout << "  Telp Penerima    : " << helper->data->penerima.telp << endl;
+        cout << "  Alamat Tujuan    : " << helper->data->penerima.alamat << endl;
+        cout << "  Kategori Barang  : " << helper->data->kategoriBarang << endl;
+        cout << "  Status           : " << getStatus(helper->data) << endl;
+        cout << "----------------------------------------" << endl;
+
         helper = helper->next;
+        num++;
     }
 };
 
@@ -513,7 +676,7 @@ void showTree(NodeTree* root, int depth = 0){
     }
 }
 
-void addToTree(Paket* data){
+void addToTree(Paket*& data){
     bool found = false;
     if(data == nullptr){
         cout << "\n\nData masih kosong.";
@@ -535,7 +698,7 @@ void addToTree(Paket* data){
     return;
 };
 
-void deleteFromTree(Paket* data){
+void deleteFromTree(Paket*& data){
     bool found = false;
     if(rootTree == nullptr){
         cout << "\n\nTree masih kosong.";
@@ -558,25 +721,39 @@ void deleteFromTree(Paket* data){
         }
     }
     if(!found){
-        cout << "\n\nPaket tidak ditemukan";
+        cout << "\n\nPaket " << data->resi << " tidak ditemukan";
+    }
+    if(found){
+        // cout << "[DEBUG] Deleted from tree: " << data->resi << endl;
     }
     return;
 };
 
-void enqueueFromTree(){
-    if(rootTree == nullptr){
+void enqueueFromTree() {
+    if (rootTree == nullptr) {
         cout << "\n\nTree masih kosong.";
         return;
     }
-
-    for(NodeTree* kategoriNode : rootTree->child){
-        for(NodeTree* paketNode : kategoriNode->child){
-            enqueueHelper(paketNode->dataPtr);
-            //remove from tree
-            deleteFromTree(paketNode->dataPtr);
+    bool isEmpty = true;
+    vector<Paket*> toProcess;
+    for (NodeTree* kategoriNode : rootTree->child) {
+        for (NodeTree* paketNode : kategoriNode->child) {
+            if (paketNode->dataPtr != nullptr) {
+                isEmpty = false;
+                toProcess.push_back(paketNode->dataPtr);
+            }
         }
     }
-};
+    for (Paket* p : toProcess) {
+        enqueueHelper(p);
+        deleteFromTree(p);
+    }
+    if (isEmpty) {
+        cout << "\n\n[Gudang kosong]\n";
+        return;
+    }
+    cout << "\nPaket telah masuk ke antrian.";
+}
 
 //Graph
 //Helper to find city node in kotaGraph
@@ -589,18 +766,18 @@ NodeGraph* findKotaNode(string nama){
     return nullptr; //kalo ga ketemu
 }
 
+//helper show kota
 void showGraph() {
-    cout << "\n=== Daftar Kota dan Koneksinya ===\n";
+    cout << "\n=== Daftar Kota ===\n";
+    int i = 1;
     for (auto node : kotaGraph) {
-        cout << node->kota << " terhubung ke:\n";
-        for (const auto& edge : node->adjList) {
-            cout << "  - " << edge.kotaTujuan->kota << " (" << edge.jarak << " km)\n";
-        }
-        cout << endl;
+        cout << "[" << i << "] " << node->kota << endl;
+        i++;
     }
+    cout << "================\n";
 }
+
 //Dijkstra Shortest Path
-//!I DON'T UNDESTAND 
 int getJarak(const string& asal, const string& tujuan) {
     NodeGraph* start = findKotaNode(asal);
     NodeGraph* end = findKotaNode(tujuan);
@@ -768,7 +945,10 @@ void initPaketDB(){
             enqueuePaket(paket, headClientOut, tailClientOut);
             break;
         case DELIVERED:
-            pushHistory(paket);
+            pushHistory(paket, headNodeDelivered);
+            break;
+        case TRANSIT_ACC:
+            pushHistory(paket, headNodeHistory);
             break;
         case RETURNED:
             addToTree(paket);
@@ -792,7 +972,6 @@ void savePaketDB(){
         while (node != nullptr) {
             Paket* p = node->dataPtr;
             // Format: resi|kategoriBarang|waktuKirim|berat|statusType|statusTime|pengirim_nama|pengirim_telp|pengirim_alamat|penerima_nama|penerima_telp|penerima_alamat
-            if(p->statusType != TRANSIT_ACC) { //paket yang sudah keluar dari gudang tidak disave
             tulis << p->resi << '|'
                 << p->kategoriBarang << '|'
                 << p->waktuKirim << '|'
@@ -805,58 +984,54 @@ void savePaketDB(){
                 << p->penerima.nama << '|'
                 << p->penerima.telp << '|'
                 << p->penerima.alamat << '\n';
-            }
             node = node->next;
         }
     }
     tulis.close();
-    cout << "\n[Data paket berhasil disimpan ke file]";
+    cout << "\n[Data paket berhasil disimpan ke file]\n";
 };
 
-//CLI 
-
-//helper getStatus
-string getStatus(Paket* data){
-    string statusPaket = "";
-    string statusStr;
-    if(!data){
-        cout << "\n\n[Data kosong!]";
-        return statusPaket;
-    }
-    switch (data->statusType)
-    {
-    case TRANSIT_IN:
-        statusStr = "Paket tiba di Surabaya [Rungkut DC]";
-        break;
-    case CLIENT_IN:
-        statusStr = "Menunggu konfirmasi";
-        break;
-    case GUDANG:
-        statusStr = "Paket di gudang Surabaya [Rungkut DC]";
-        break;
-    case TRANSIT_OUT:
-        statusStr = "Paket telah disortir";
-        break;
-    case TRANSIT_ACC:
-        statusStr = "Paket keluar dari Surabaya [Rungkut DC]";
-        break;
-    case CLIENT_OUT:
-        statusStr = "Paket diantar ke alamat tujuan";
-        break;
-    case DELIVERED:
-        statusStr = "Paket telah diterima";
-        break;
-    case RETURNED:
-        statusStr = "Paket dikembalikan";
-        break;
-    default:
-        break;
+void importBulkDB(string filename){
+    ifstream baca("./data/" + filename);
+    if (baca.fail()){
+        cerr << "\n\nGagal membaca file bulk kirim";
+        return exit(0);
     }
 
-    statusPaket = "[" + getDateNow() + " <" + getWaktuNow(); + ">]";
-    statusPaket = statusPaket + " - " + statusStr;
-    return statusPaket;
+    string line;
+    while(getline(baca, line)) {
+        stringstream ss(line);
+        Paket* paket = new Paket;
+        string statusStr;
+
+        // Format file: kategoriBarang|waktuKirim|berat|statusType|pengirim_nama|pengirim_telp|pengirim_alamat|penerima_nama|penerima_telp|penerima_alamat
+        getline(ss, paket->kategoriBarang, '|');
+        getline(ss, paket->waktuKirim, '|');
+        getline(ss, paket->berat, '|');
+        getline(ss, paket->pengirim.nama, '|');
+        getline(ss, paket->pengirim.telp, '|');
+        getline(ss, paket->pengirim.alamat, '|');
+        getline(ss, paket->penerima.nama, '|');
+        getline(ss, paket->penerima.telp, '|');
+        getline(ss, paket->penerima.alamat, '|');
+        // Generate resi
+        paket->resi = resiGen(paket->pengirim.telp);
+        paket->statusTime = setStatusTime(); //set status time to now
+        if(paket->pengirim.alamat == "SURABAYA"){
+            paket->statusType = CLIENT_IN; //pengirim dari surabaya
+        } else {
+            paket->statusType = TRANSIT_IN; //transit
+        }
+        // Add to hash map
+        addToHash(paket);
+
+        enqueueHelper(paket); //enqueue sesuai statusnya
+    }
+    baca.close();
+    cout << "\n[Data bulk kirim berhasil ditambahkan]\n";
 }
+
+//CLI 
 
 void menuCekResi(){
     system("cls");
@@ -866,7 +1041,7 @@ void menuCekResi(){
     cin >> resi;
     //regex input invalid return
     if(!regexValidator(RESI, resi)){
-        cout << "\n\n[Resi tidak valid!]";
+        cout << "\n\n[Resi tidak valid!]\n";
         system("pause");
         return;
     }
@@ -874,11 +1049,12 @@ void menuCekResi(){
     Paket* data;
     data = findInHash(resi);
     if(data){
+        system("cls");
         cout << "\n===== Detail Paket =====\n";
         cout << "Resi           : " << data->resi << endl;
         cout << "Kategori       : " << data->kategoriBarang << endl;
         cout << "Berat          : " << data->berat << " Kg" << endl;
-        cout << "Waktu Kirim    : " << data->waktuKirim << endl;
+        cout << "Tanggal Kirim  : " << data->waktuKirim << endl;
         cout << "Pengirim       : " << data->pengirim.nama << endl;
         cout << "Telp Pengirim  : " << data->pengirim.telp << endl;
         cout << "Alamat Pengirim: " << data->pengirim.alamat << endl;
@@ -905,11 +1081,13 @@ void menuKirimPaket(){
         for (size_t i = 0; i < rootTree->child.size(); ++i) {
             cout << "[" << i+1 << "] " << rootTree->child[i]->key << endl;
         }
-        cout << "\nKategori Barang: ";
-        cin.ignore();
+        cout << "\nKategori Barang (0 untuk batal): ";
         cin >> pilihan;
+        if (pilihan == 0) {
+            return;
+        }
         if (pilihan < 1 || pilihan > rootTree->child.size()) {
-            cout << "\n\n[Kategori tidak valid!]";
+            cout << "\n\n[Kategori tidak valid!]\n";
             system("pause");
             continue; //invalid input, continue to loop
         }
@@ -919,34 +1097,34 @@ void menuKirimPaket(){
         cin >> berat;
         //validasi berat
         if (berat <= 0 || berat > 100) { //max 100KG
-            cout << "\n\n[Berat tidak valid!]";
+            cout << "\n\n[Berat tidak valid!]\n";
             system("pause");
             continue;;
         }
         beratStr = to_string(berat);
         //list kota        
-        cout << "\nDaftar Kota Tersedia:\n";
-        for (size_t i = 0; i < kotaGraph.size(); ++i) {
-            cout << "[" << i+1 << "] " << kotaGraph[i]->kota << endl;
-        }
+        showGraph();
         
-        cout << "Alamat Pengirim: ";
-        cin >> pilihan;
+        //Harusnya always SURABAYA tapi untuk simulasi paket datang dari kota lain jadi masi dibolehin
+        cout << "\nAlamat Pengirim: ";
+        cin >> pilihan; 
         if (pilihan < 1 || pilihan > kotaGraph.size()) {
-            cout << "\n\n[Kota tidak valid!]";
+            cout << "\n\n[Kota tidak valid!]\n";
             system("pause");
             continue; //invalid input, continue to loop
         }
-        alamatKirim = kotaGraph[pilihan-1]->kota;
-        cout << "Alamat Penerima: ";
+        alamatKirim = kotaGraph[pilihan-1]->kota; 
+        cout << "Alamat Penerima: "; 
         cin >> pilihan;
         cin.ignore(); 
         if (pilihan < 1 || pilihan > kotaGraph.size()) {
-            cout << "\n\n[Kota tidak valid!]";
+            cout << "\n\n[Kota tidak valid!]\n";
             system("pause");
             continue; //invalid input, continue to loop
         }
         alamatTujuan = kotaGraph[pilihan-1]->kota;
+        
+        break;
     }
     //cek ongkir
     ongkir = getOngkir(berat, alamatKirim, alamatTujuan);
@@ -956,7 +1134,7 @@ void menuKirimPaket(){
 
     choice = inputHandler();
     if (choice != 'Y' && choice != 'y') {
-        cout << "\n\n[Paket tidak jadi dikirim]";
+        cout << "\n\n[Paket tidak jadi dikirim]\n";
         system("pause");
         return;
     }
@@ -974,7 +1152,7 @@ void menuKirimPaket(){
 
         //regex invalid continue else break
         if(!regexValidator(NAMA, pengirim.nama) || !regexValidator(TELP, pengirim.telp)){
-            cout << "\n\n[Input tidak valid!]";
+            cout << "\n\n[Input tidak valid!]\n";
             system("pause");
             continue;
         } else {
@@ -995,7 +1173,7 @@ void menuKirimPaket(){
 
         //regex invalid continue else break
         if(!regexValidator(NAMA, penerima.nama) || !regexValidator(TELP, penerima.telp)){
-            cout << "\n\n[Input tidak valid!]";
+            cout << "\n\n[Input tidak valid!]\n";
             system("pause");
             continue;
         } else {
@@ -1003,8 +1181,8 @@ void menuKirimPaket(){
         }
     }
     string resi = resiGen(pengirim.telp);
-    string waktuKirim = getWaktuNow();
-    string statusTime = waktuKirim; 
+    string waktuKirim = getDateNow();
+    string statusTime = setStatusTime();
     StatusType statusType = CLIENT_IN; //default status type
     if (pengirim.alamat != "SURABAYA"){
         statusType = TRANSIT_IN;
@@ -1014,7 +1192,7 @@ void menuKirimPaket(){
     cout << "===== Data Paket =====\n";
     cout << "Resi           : " << resi << endl;
     cout << "Kategori       : " << kategoriBarang << endl;
-    cout << "Berat          : " << beratStr << " Kg" << endl;
+    cout << "Berat          : " << berat << " Kg" << endl;
     cout << "Pengirim       : " << pengirim.nama << endl;
     cout << "Telp Pengirim  : " << pengirim.telp << endl;
     cout << "Alamat Pengirim: " << pengirim.alamat << endl;
@@ -1027,29 +1205,35 @@ void menuKirimPaket(){
 
     choice = inputHandler();
     if (choice != 'Y' && choice != 'y') {
-        cout << "\n\n[Paket tidak jadi dikirim]";
+        cout << "\n\n[Paket tidak jadi dikirim]\n";
         system("pause");
         return;
     }
-
+    cout << "\n\n[Mengirim paket...]\n";
     Paket* newPaket = new Paket(resi, kategoriBarang, waktuKirim, beratStr, statusType, statusTime, pengirim, penerima);
     //add to hash
+    cout << "\n[Menambahkan Data...]";
     addToHash(newPaket);
     //add to queue
+    cout << "\n\n[Mengirim paket ke antrian...]";
     enqueueHelper(newPaket);
+
+    cout << "\n\n[Paket berhasil dikirim!]\n";
+    system("pause");
+    return;
 }
 
-void menuQueue(NodeQueue*& head, string title) {
+void menuQueue(NodeQueue*& head, NodeQueue*& tail, string title) {
     do {
         system("cls");
         cout << "===== " << title << " =====" << endl;
         if(!head) {
-            cout << "\nAntrean kosong, tidak ada paket untuk diproses.";
+            cout << "\nAntrean kosong, tidak ada paket untuk diproses.\n";
             system("pause");
             return;
         }
         showQueue(head);
-        cout << "\n1. Dequeue All\n2. Dequeue One\n0. Kembali ke Menu Utama";
+        cout << "\n1. Dequeue All\n2. Dequeue One\n3. Sort Paket\n0. Kembali ke Menu Utama";
         cout << "\nPilihan: ";
 
         char choice = inputHandler();
@@ -1058,18 +1242,22 @@ void menuQueue(NodeQueue*& head, string title) {
                 while (head != nullptr) {
                 dequeueHelper(head->data);
                 }
-                cout << "\nSemua paket telah keluar dari antrian.";
+                cout << "\nSemua paket telah keluar dari antrian.\n";
                 system("pause");
                 continue;
             case '2':
                 dequeueHelper(head->data);
-                cout << "\nPaket telah dihapus dari antrian.";
+                cout << "\nPaket telah dihapus dari antrian.\n";
+                system("pause");
+                continue;
+            case '3':
+                sortPaketByWaktuKirim(head, tail);
                 system("pause");
                 continue;
             case '0':
                 return; // Kembali ke menu utama
             default:
-                cout << "\nPilihan tidak valid!";
+                cout << "\nPilihan tidak valid!\n";
                 system("pause");
                 continue;;
         }
@@ -1094,7 +1282,6 @@ void menuGudang() {
         switch (choice) {
             case '1':
                 enqueueFromTree();
-                cout << "\nPaket telah masuk ke antrian.";
                 system("pause");
                 continue;
             case '2':
@@ -1106,199 +1293,247 @@ void menuGudang() {
                     deleteFromHash(data);
                     cout << "\nPaket berhasil dihapus dari Gudang.";
                 } else {
-                    cout << "\nPaket tidak ditemukan.";
+                    cout << "\nPaket tidak ditemukan.\n";
                 }
                 system("pause");
                 continue;
             case '0':
                 return; // Kembali ke menu utama
             default:
-                cout << "\nPilihan tidak valid!";
+                cout << "\nPilihan tidak valid!\n";
                 system("pause");
                 continue;
         }
     } while (true);
 }
 
+void menuReturnPaket(){
+    do{
+        system("cls");
+        cout << "===== History Delivered Kirim Aja DC Rungkut =====\n";
+        if (headNodeDelivered == nullptr) {
+            cout << "History kosong, tidak ada paket yang tersedia.\n";
+            system("pause");
+            return;
+        }
+        showHistory(headNodeDelivered);
+        cout << "\n1. Return Paket\n2. Bersihkan History\n0. Kembali ke Menu Utama\nPilihan: ";
+        
+        char choice = inputHandler();
+        string resi;
+        switch (choice) {
+            case '1': {
+                if (headNodeDelivered) {
+                    cout << "\nMasukkan Resi Paket yang ingin dikembalikan: ";
+                    cin >> resi;
+                    //regex input invalid return
+                    if(!regexValidator(RESI, resi)){
+                        cout << "\n\n[Resi tidak valid!]\n";
+                        system("pause");
+                        continue;
+                    }
+                    returnPaket(resi);
+                }
+                system("pause");
+                continue;
+            }
+            case '2':
+                clearHistory(headNodeDelivered);
+                system("pause");
+                continue;
+            case '0':
+                return; // Kembali ke menu utama
+            default:
+                cout << "\nPilihan tidak valid!\n";
+                system("pause");
+                continue;
+        }
+    }while(true);
+};
+
 void menuHistory() {
     do{
         system("cls");
-        cout << "===== History Kirim Aja DC Rungkut =====\n";
+        cout << "===== History Transit Kirim Aja DC Rungkut =====\n";
         if (headNodeHistory == nullptr) {
             cout << "History kosong, tidak ada paket yang tersedia.\n";
             system("pause");
             return;
         }
         showHistory(headNodeHistory);
-        cout << "\n1. Kembalikan Paket\n2. Bersihkan History\n0. Kembali ke Menu Utama\nPilihan: ";
+        cout << "\n1. Hapus history terbaru\n2. Bersihkan History\n0. Kembali ke Menu Utama\nPilihan: ";
 
         char choice = inputHandler();
         switch (choice) {
             case '1': {
                 if (headNodeHistory) {
-                    popHistory(headNodeHistory->data);
-                    cout << "\nPaket berhasil dikembalikan.";
+                    popHistory(headNodeHistory->data, headNodeHistory);
+                    cout << "\nPaket berhasil dihapus dari history.\n";
                 }
                 system("pause");
                 continue;
             }
             case '2':
-                clearHistory();
+                clearHistory(headNodeHistory);
                 system("pause");
                 continue;
             case '0':
                 return; // Kembali ke menu utama
             default:
-                cout << "\nPilihan tidak valid!";
+                cout << "\nPilihan tidak valid!\n";
                 system("pause");
                 continue;
         }
     }while(true);
 }
 
+void menuImportBulk() {
+    string filename;
+    system("cls");
+    cout << "===== Kirim Bulk =====\n";
+    cout << "Pastikan file txt sudah tersedia.\n";
+    cout << "Masukan nama file (tanpa .txt) (0 untuk batal): ";
+    cin >> filename;
+    if (filename == "0") {
+        return;
+    }
+    filename += ".txt";
+    importBulkDB(filename);
+
+    system("pause");
+    return;
+}
+
 void quit() {
     cout << "\n\nSaving...." << endl;
-    // savePaketDB();
+    savePaketDB();
     cout << "\n\nProgram End." << endl;
+    exit(0);
 }
 
 void menu(MenuType menuType){
-    system("cls");
-    char choice;
-    switch (menuType)
-    {
-    case ADMIN_MENU:
-        cout <<"===== Kirim Aja DC Rungkut =====\n";
-        cout << "1. Cek Resi\n";
-        cout << "2. Kirim paket\n"; //paket baru
-        cout << "3. Konfirmasi Request\n"; //CLIENT_IN
-        cout << "4. Paket transit masuk\n"; //TRANSIT_IN
-        cout << "5. Cek Gudang\n"; //Kosongin gudang
-        cout << "6. Paket transit keluar\n"; //TRANSIT_OUT
-        cout << "7. Konfirmasi Paket sampai\n"; //CLIENT_OUT
-        cout << "8. Lihat History\n";
-        cout << "0. Keluar\n";
-        cout << "Pilihan: ";
-        
-
-        choice = inputHandler(); 
-        switch (choice)
+    while (true) {
+        system("cls");
+        char choice;
+        switch (menuType)
         {
-        case '1':
-            menuCekResi();
-            break;
-        case '2':
-            menuKirimPaket();
-            break;
-        case '3':
-            menuQueue(headClientIn, "Konfirmasi Request Kirim");
-            break;
-        case '4':
-            menuQueue(headTransitIn, "Paket Transit Masuk");
-            break;
-        case '5':
-            menuGudang();
-            break;
-        case '6':
-            menuQueue(headTransitOut, "Paket Transit Keluar");
-            break;
-        case '7':
-            menuQueue(headClientOut, "Konfirmasi Paket Sampai");
-            break;
-        case '8':
-            menuHistory();
-            break;
-        case '0':
+        case ADMIN_MENU:
+            cout <<"===== Kirim Aja DC Rungkut =====\n";
+
+            cout << "1. Konfirmasi Request\n"; //CLIENT_IN
+            cout << "2. Paket transit masuk\n"; //TRANSIT_IN
+            cout << "3. Cek Gudang\n"; //Kosongin gudang
+            cout << "4. Paket transit keluar\n"; //TRANSIT_OUT
+            cout << "5. Konfirmasi Paket sampai\n"; //CLIENT_OUT
+            cout << "6. Return Paket\n"; //History Delivered
+            cout << "7. History Paket Keluar\n";
+            cout << "8. Kirim bulk\n";
+            cout << "0. Keluar\n";
+            cout << "Pilihan: ";
             
-            return;
-        default:
-            cout << "Pilihan invalid!\n";
-            system("pause");
-            menu(ADMIN_MENU);
-            break;
-        }
 
-        break;
-    case USER_MENU:
-        cout << "===== Kirim Aja DC Rungkut =====\n";
-        cout << "1. Cek Resi\n";
-        cout << "2. Kirim Paket\n"; //req kirim paket
-        cout << "0. Keluar\n";
-        cout << "Pilihan: ";
-
-
-        choice = inputHandler();
-        switch (choice)
-        {
-        case '1':
-            menuCekResi();
-            break;
-        case '2':
-            menuKirimPaket();
-            break;
-        case '0':
+            choice = inputHandler(); 
+            switch (choice)
+            {
             
-            return;
+            case '1':
+                menuQueue(headClientIn, tailClientIn, "Konfirmasi Request Kirim");
+                menu(ADMIN_MENU);
+                break;
+            case '2':
+                menuQueue(headTransitIn, tailTransitIn, "Paket Transit Masuk");
+                menu(ADMIN_MENU);
+                break;
+            case '3':
+                menuGudang();
+                menu(ADMIN_MENU);
+                break;
+            case '4':
+                menuQueue(headTransitOut, tailTransitOut, "Paket Transit Keluar");
+                menu(ADMIN_MENU);
+                break;
+            case '5':
+                menuQueue(headClientOut, tailClientOut, "Konfirmasi Paket Sampai");
+                menu(ADMIN_MENU);
+                break;
+            case '6':
+                menuReturnPaket();
+                menu(ADMIN_MENU);
+                break;
+            case '7':
+                menuHistory();
+                menu(ADMIN_MENU);
+                break;
+            case '8':
+                menuImportBulk();
+                menu(ADMIN_MENU);
+                break;
+            case '0':
+                menu(MAIN_MENU);
+                return;
+            default:
+                cout << "Pilihan invalid!\n";
+                system("pause");
+                menu(ADMIN_MENU);
+                break;
+            }
+
+            break;
+
+        case MAIN_MENU:
+            system("cls");
+            cout << "===== Selamat Datang di =====\n";        
+            cout << "    __ __ _      _              ___      _          \n";
+            cout << "   / //_/(_)____(_)___ ___     /   |    (_)___ _    \n";
+            cout << "  / ,<  / / ___/ / __ `__ \\   / /| |   / / __ `/   \n";
+            cout << " / /| |/ / /  / / / / / / /  / ___ |  / / /_/ /     \n";
+            cout << "/_/ |_/_/_/  /_/_/ /_/ /_/  /_/  |_|_/ /\\__,_/      \n";
+            cout << "                                  /___/             \n";
+            cout << "===== DC Rungkut =====\n";
+            cout << "1. Cek Resi\n2. Kirim Paket\n3. Manage\n0. Keluar\n";
+            cout << "Pilihan: ";
+
+            choice = inputHandler();
+            switch (choice)
+            {
+            case '1':
+                menuCekResi();
+                menu(MAIN_MENU);
+                break;
+            case '2':
+                menuKirimPaket();
+                menu(MAIN_MENU);
+                break;
+            case '3':
+                menu(ADMIN_MENU);
+                break;
+            case '0':
+                quit();
+                break;
+            default:
+                cout << "Pilihan invalid!\n";
+                system("pause");
+                menu(MAIN_MENU);
+                break;
+            }
         default:
-            cout << "Pilihan invalid!\n";
-            system("pause");
-            menu(USER_MENU);
             break;
         }
-        break;
-
-    case MAIN_MENU:
-
-        cout << "===== Kirim Aja DC Rungkut =====\n";
-        cout << "1. Petugas\n2. Pengguna\n0. Keluar\n";
-        cout << "Pilihan: ";
-
-
-        choice = inputHandler();
-        switch (choice)
-        {
-        case '1':
-            menu(ADMIN_MENU);
-            break;
-        case '2':
-            menu(USER_MENU);
-            break;
-        case '0':
-            quit();
-            return;
-        default:
-            cout << "Pilihan invalid!\n";
-            system("pause");
-            menu(MAIN_MENU);
-            break;
-        }
-    default:
-        break;
     }
 }
 
-//==
-
-
+//
 void init() {
-    initPaketDB();
+    initGraphDB();
     initTreeDB();
+    initPaketDB();
     menu(MAIN_MENU);
 }
 
 int main() {
-    srand(time(0));
-    
     atexit(quit);
+    srand(time(0));
     init();
 
-    // string no = "0812345678901";
-    // string resi = resiGen(no);
-    // cout << resi <<endl;
-    // cout << hashFunc(resi);
-
-    // initGraphDB();      // initialize the graph from your files
-    // showGraph();
-    // cout << getOngkir(5, "SURABAYA", "YOGYAKARTA") << endl;
     return 0;
 }

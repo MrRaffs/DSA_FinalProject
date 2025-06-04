@@ -8,3 +8,4 @@ alat_tulis
 obat
 peralatan_rumah
 kosmetik
+mainan
