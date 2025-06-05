@@ -31,7 +31,7 @@ enum MenuType{
     ADMIN_MENU,
     USER_MENU
 };
-
+//status type paket
 enum StatusType{
     TRANSIT_IN,
     CLIENT_IN,
@@ -173,7 +173,6 @@ string resiGen(string noTelp){
     timestamp = to_string(sumTime) + timeSeconds.substr(8,timeSeconds.length());
     //randomize last 3 digit
     int randNum = rand() % 1000;
-    // cout << randNum << endl;
     //add em up
     resi = "AJ" + to_string(sumTelp) + timestamp + to_string(sumTelp % 9) + to_string(randNum);
     //check length
