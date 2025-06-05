@@ -2,7 +2,6 @@
 #include <string>
 #include <fstream>
 #include <sstream>
-#include <algorithm> //remove func
 #include <vector>
 #include <ctime>
 #include <conio.h>
@@ -104,7 +103,7 @@ NodeQueue* tailTransitIn = nullptr;
 NodeQueue* headTransitOut = nullptr;
 NodeQueue* tailTransitOut = nullptr;
 
-//stack, history sampai ke pelanggan
+//stack, history sampai ke pelanggan dan transit keluar
 struct NodeHistory{
     Paket* data {nullptr};
     NodeHistory* next{nullptr};
@@ -113,7 +112,7 @@ struct NodeHistory{
     data(d){};
 };
 NodeHistory* headNodeHistory = nullptr; //top of the stack
-NodeHistory* headNodeDelivered = nullptr; //top of the stack, not used yet
+NodeHistory* headNodeDelivered = nullptr; 
 
 struct NodeTree{
     string key;
@@ -152,6 +151,7 @@ int getJarak(const string& asal, const string& tujuan);
 void updatePaketDB();
 
 //UTILS 
+
 //resi generator
 string resiGen(string noTelp){
     string resi;
@@ -513,10 +513,9 @@ void sortPaketByWaktuKirim(NodeQueue*& head, NodeQueue*& tail){
 //stack operation
 void pushHistory(Paket* data, NodeHistory*& head){
     NodeHistory* newNode = new NodeHistory(data);
-    newNode->next = head; //it point at nullptr if stack is empty, so no prob here
+    //this point at nullptr if stack is empty, so no prob here
+    newNode->next = head; 
     head = newNode;
-
-    head->data->statusType = DELIVERED;
     return;
 };
 
@@ -542,7 +541,7 @@ void returnPaket(string resi){
         return;
     }
     
-    // Find the delivered package by resi
+    // Find the delivered paket by resi
     NodeHistory* helper = headNodeDelivered;
     NodeHistory* prev = nullptr;
     while (helper != nullptr) {
@@ -562,7 +561,7 @@ void returnPaket(string resi){
             helper->data->pengirim = helper->data->penerima; //pengirim jadi penerima
             helper->data->penerima = temp;
 
-            addToTree(helper->data); //add to tree
+            addToTree(helper->data); //kembalikan ke gudang
             delete helper; //delete the node
             cout << "\n[Paket berhasil dikembalikan ke Gudang]\n";
             return;
@@ -570,7 +569,7 @@ void returnPaket(string resi){
         prev = helper; 
         helper = helper->next;
     }
-
+    // not found dalam history
     cout << "\n[Paket dengan Resi " << resi << " tidak ditemukan dalam history.]";
     system("pause");
     return;
@@ -683,7 +682,7 @@ void addToTree(Paket*& data){
         return;
     }
     NodeTree* newChild = new NodeTree(data->resi, data);
-    //hwo
+    //hwoh
     for(NodeTree* child : rootTree->child){
         if(child->key == data->kategoriBarang){
             child->child.push_back(newChild);
@@ -735,6 +734,7 @@ void enqueueFromTree() {
         return;
     }
     bool isEmpty = true;
+    // Traverse the tree and enqueue all Paket nodes
     vector<Paket*> toProcess;
     for (NodeTree* kategoriNode : rootTree->child) {
         for (NodeTree* paketNode : kategoriNode->child) {
@@ -744,13 +744,15 @@ void enqueueFromTree() {
             }
         }
     }
-    for (Paket* p : toProcess) {
-        enqueueHelper(p);
-        deleteFromTree(p);
-    }
+    
     if (isEmpty) {
         cout << "\n\n[Gudang kosong]\n";
         return;
+    }
+
+    for (Paket* p : toProcess) {
+        enqueueHelper(p);
+        deleteFromTree(p);
     }
     cout << "\nPaket telah masuk ke antrian.";
 }
@@ -1420,11 +1422,11 @@ void menu(MenuType menuType){
         case ADMIN_MENU:
             cout <<"===== Kirim Aja DC Rungkut =====\n";
 
-            cout << "1. Konfirmasi Request\n"; //CLIENT_IN
-            cout << "2. Paket transit masuk\n"; //TRANSIT_IN
-            cout << "3. Cek Gudang\n"; //Kosongin gudang
-            cout << "4. Paket transit keluar\n"; //TRANSIT_OUT
-            cout << "5. Konfirmasi Paket sampai\n"; //CLIENT_OUT
+            cout << "1. Antrian Konfirmasi Request\n"; //CLIENT_IN
+            cout << "2. Antrian Transit Masuk\n"; //TRANSIT_IN
+            cout << "3. Cek Gudang\n"; //Tree
+            cout << "4. Antrian Paket Transit Keluar\n"; //TRANSIT_OUT
+            cout << "5. Antrian Konfirmasi Paket Sampai\n"; //CLIENT_OUT
             cout << "6. Return Paket\n"; //History Delivered
             cout << "7. History Paket Keluar\n";
             cout << "8. Kirim bulk\n";
